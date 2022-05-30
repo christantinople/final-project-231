@@ -1,0 +1,91 @@
+---
+title: "Final Project"
+author: "Chris Lefrak"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# packages
+library(tidyverse)
+library(tidymodels)
+library(ISLR)
+library(rpart.plot)
+library(vip)
+library(janitor)
+library(randomForest)
+library(ranger)
+library(xgboost)
+library(corrplot)
+library(ggplot2)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+# read in data
+red_wine <- read.csv("data/winequality_red.csv")
+white_wine <- read.csv("data/winequality_white.csv")
+
+# add columns for color so we can
+# differentiate once concatenated
+white_wine$color <- as.factor("White")
+red_wine$color <- as.factor("Red")
+
+# concatenate data frames
+all_wine <- rbind(red_wine, white_wine) %>% 
+  clean_names() %>% # replaces periods with underscores in column names
+  rename(ph = p_h) # get rid of underscore in pH column name
+
+# display
+all_wine%>%
+  head()
+```
+
+First, let's check if our data has any missing values.
+
+`is.na()` returns an object that is the same size as `all_wine` but with the values of `TRUE` where values are `NA` and `FALSE` where values are not `NA`.
+
+```{r}
+data.frame(is.na(all_wine))%>%
+  head()
+```
+
+We can now use the `sum()` function to sum all of the boolean values outputted by `is.na()`. This will tell us how many `TRUE` values there are; i.e., this will tell us how many missing values are in our data.
+
+```{r}
+data.frame(is.na(all_wine))%>%
+  sum()
+```
+
+We are lucky; this 
+
+
+```{r}
+set.seed(42069) # for reproducibiility
+
+# get training and testing data
+wine_split <- initial_split(all_wine,prop=0.8,
+                               strata=quality)
+
+wine_train <- training(wine_split)
+wine_test <- testing(wine_split)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
