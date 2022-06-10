@@ -32,9 +32,19 @@ library(GGally)
 
 # Introduction
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+The aim of this project is to predict the quality of wine based on measurable factors relating to the physiochemical properties of the wine.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## The Data
+
+The data is in two separate .csv files found [here](https://www.kaggle.com/datasets/brendan45774/wine-quality) on the kaggle website. One .csv file has 1599 observations of red wine and the other file has 4898 observations of white wine. They each record the same data; i.e., have the same variables based on physiochemical tests. The details of which can be found in the codebook.
+
+The data is originally by:
+
+P. Cortez, A. Cerdeira, F. Almeida, T. Matos and J. Reis. 
+Modeling wine preferences by data mining from physicochemical properties.
+In Decision Support Systems, Elsevier, 47(4):547-553. ISSN: 0167-9236.
+
+### Loading and Checking Data
 
 ```{r}
 # read in data
@@ -74,8 +84,9 @@ data.frame(is.na(all_wine))%>%
 
 We are lucky; this data is already very clean and has no missing values. Now we can proceed with our analysis.
 
-We move onto setting up our initial split of the data. We randomly select 80% of the data to be used as training data to train our models, and 20% of the data to be used as testing data to assess the performance of our models. However, we also stratify the the split by our outcome variable `quality`. This ensures that the same proportion of outcomes in `quality` are found in the overall data, training data, and testing data.
+### Data Splitting 
 
+We move onto setting up our initial split of the data. We randomly select 80% of the data to be used as training data to train our models, and 20% of the data to be used as testing data to assess the performance of our models. However, we also stratify the the split by our outcome variable `quality`. This ensures that the same proportion of outcomes in `quality` are found in the overall data, training data, and testing data.
 
 ```{r}
 set.seed(42069) # for reproducibiility
@@ -88,9 +99,10 @@ wine_train <- training(wine_split)
 wine_test <- testing(wine_split)
 ```
 
-We will also fold the training data with a 5-fold cross-validation to actually train the models with 
+We will also fold the training data with a 5-fold cross-validation to actually train the models with during our model selection phase. This mean we are splitting our training data into 5 groups. We will fit a model with data from 4 of the groups and use the 5th group as a mini testing set to evaluate an appropriate performance metric on the model. We then record this metric, and do the same process with a different group of 4. We do this process until every group has had a chance to be a mini test set, and we take our final performance metric to be the average of the 5 metrics we get.
 
 ```{r}
+set.seed(42069) # for reproducibility
 # cross-validation folds
 wine_fold <- vfold_cv(wine_train, v=5, strata=quality)
 ```
@@ -109,6 +121,7 @@ all_wine %>%
   theme_bw()+
   theme(plot.title = element_text(hjust = 0.5))
 ```
+
 It looks as if the `quality` of our wine is roughly normally distributed. Most of our observations have a rating of 5 or 6 with very few particularly low or particularly high quality wines. Intuitively, it would make sense that most wines would be given a mid-range or "Fair" rating, while there are fewer "Poor" or "Good" wines. We can look at the raw counts for each rating.
 
 ```{r}
@@ -143,18 +156,27 @@ corr_mat%>%
   corrplot(method="number",order = 'hclust', addrect = 3)
 ```
 
-We actually see that none of our predictors are very correlated with `quality`. This is not a good sign for our machine learning models to do well; nevertheless we still move forward.
+We actually see that none of our predictors are very correlated with `quality`. This is not a good sign for our machine learning models to do well; nevertheless we still move forward. Let's create a pair plot using the predictors that are at least somewhat correlated with `quality`. That is, we make a pair plot with `quality`, `density`, `alcohol`, `chlorides`, and `volatile_acidity`.
 
-```{r}
-ggpairs(all_wine%>%select(-color))
+```{r, echo=FALSE, fig.width=8,fig.height=8}
+ggpairs(all_wine %>% 
+          select(
+            c(quality, volatile_acidity, density, alcohol, chlorides)
+            )
+        )
 ```
 
+This plot makes it easier to digest how the predictors that correlate with `quality` correlate with each other. This information can be used to inform us which interactions will be important to include in our models. In particular, we see that `alcohol` and `density` are highly negatively correlated which each other. This makes sense intuitively since ethanol is less dense than water.
+
+This information leads us to the section where we actually build our machine learning models.
+
 # Building The Models
-The ease of the `tidymodels` and `tidyverse` framework allows us to set up a single recipe that we will use to fit all of our models. From our correlation plot, there are no obvious signs that interaction terms would be necessary for our models. We `free_sulfur_dioxide` and `total_sulfer_dioxide` are highly correlated, and that makes sense. There is the possibility of a colinearity issue, but I believe the correlation (0.72) is low enough to disuade this concern. So we build our recipe by including all predictors and no interaction terms.
+The ease of the `tidymodels` and `tidyverse` framework allows us to set up a single recipe that we will use to fit all of our models. As mentioned above, it would make sense to include an interaction term in our recipe for `density` and `alcohol`. These are the two predictors that are the most correlated with `quality`, and they are highly correlated with each other. To be safe, we will also include interaction terms between `density` & `chlorides` and `volatile_acidity` & `chlorides` based on the correlations we see in our pair-plot in the EDA section. However, these terms will likely be less important than the `density:alcohol` interaction.
 
 ```{r}
 wine_recipe <- recipe(quality ~ ., data = wine_train)%>%
   step_dummy("color")%>%
+  step_interact(terms = ~density:alcohol + density:chlorides + volatile_acidity:chlorides)%>%
   step_normalize(all_predictors())
 ```
 
@@ -183,7 +205,7 @@ reg_tree_wf <- workflow() %>%
   add_recipe(wine_recipe)
 ```
 
-Now we define a grid of parameter values and fit our model for each value.
+Now we define a grid of parameter values and fit our model for each value. In using `tune_grid()`, for each possible set of parameter values, we evaluate the performance metric (RMSE in this case) of our model using 5-fold cross validation as explained in the Introduction. Since we are obtaining this metric for every possible set of parameter values based off the parameter grid we define, we will then selected the parameter set with the best performance to move forward.
 
 ```{r,eval=FALSE}
 set.seed(42069) # for reproducibility
@@ -191,7 +213,7 @@ set.seed(42069) # for reproducibility
 # define grid of parameter values
 param_grid <- grid_regular(cost_complexity(range = c(-3, -1)), levels = 10)
 
-# fit decision tree model with each paramter in `param_grid`
+# fit decision tree model with each parameter in `param_grid`
 reg_tree_tune_res <- tune_grid(
   reg_tree_wf, 
   resamples = wine_fold, 
@@ -200,19 +222,20 @@ reg_tree_tune_res <- tune_grid(
 ```
 
 ```{r,eval=FALSE,include=FALSE}
-save(reg_tree_tune_res, file = "reg_tree_tune_res.rds")
+save(reg_tree_tune_res, file = "reg_tree_tune_res_w_interact.rds")
 ```
 
 ```{r,include=FALSE}
-load("reg_tree_tune_res.rds")
+load("rds_files/reg_tree_tune_res_w_interact.rds")
 ```
 
-We visualize the results of `tune_grid` with the `autoplot` function.
+We visualize the results of `tune_grid()` with the `autoplot()` function.
 
 ```{r}
 autoplot(reg_tree_tune_res)
 ```
 
+Now we choose the set of parameter(s) that yield the lowest training RMSE, and use these parameter values to decide on the model to train with all of the training data.
 
 ```{r}
 # choose parameter value with lowest rmse
@@ -225,21 +248,22 @@ reg_tree_final <- finalize_workflow(reg_tree_wf, best_complexity)
 reg_tree_final_fit <- fit(reg_tree_final, data = wine_train)
 ```
 
-We can visualize what our final decision tree looks like with the `rpart.plot` function
+We can visualize what our final decision tree looks like with the `rpart.plot()` function
 
 ```{r}
 reg_tree_final_fit %>%
   extract_fit_engine() %>%
   rpart.plot()
 ```
-We can calculate the RMSE that our final model gives for the testing data
+
+We now assess the performance of the model by looking at the RMSE on the testing set.
 
 ```{r}
 augment(reg_tree_final_fit, new_data = wine_test) %>%
   rmse(truth = quality, estimate = .pred)
 ```
 
-The value of the RMSE by itself doesn't really mean much without more context as to what a "low" RMSE value is for our data. Therefore, let's look to other visualiztions to assess the performance of our model.
+The value of the RMSE by itself doesn't really mean much without more context as to what a "low" RMSE value is for our data. Therefore, let's look to other visualizations to assess the performance of our model.
 
 ```{r, echo=FALSE}
 augment(reg_tree_final_fit, new_data = wine_test) %>%
@@ -250,7 +274,7 @@ augment(reg_tree_final_fit, new_data = wine_test) %>%
 
 This is a scatter plot of the true quality ratings vs our predicted our quality ratings. Ideally, we want all of the dots to be near the black line which represents where the true and predicted values would be equal. 
 
-From this visualization, it doesn't look like our model performs very well. It looks like the average predicted value is between 5 and 6, no matter the true quality. It also looks like the spread is about the same.
+From this visualization, it doesn't look like our model performs very well. It looks like the average predicted value is around 5 and 6, no matter the true quality. Maybe there is a slight upward trend in the mean of the dots, but it definitey doesn't have a slope of one.
 
 We can instead visualize the distribution of each of our predictions given the corresponding true value
 
@@ -266,7 +290,7 @@ augment(reg_tree_final_fit, new_data = wine_test) %>%
   theme(plot.title = element_text(hjust = 0.5))
 ```
 
-We can see that no matter the true quality, the most common prediction is 5 or 6, which is unsurprising since this is what the bulk of our data includes.
+We can see that no matter the true quality, the most common prediction is 5 or 6 (ignoring 9's which are always predicted to be 7's), which is unsurprising since this is what the bulk of our data includes.
 
 Finally, we create a variable importance plot to see which predictors have the most importance in predicting the outcome of `quality`.
 
@@ -276,28 +300,35 @@ reg_tree_final_fit%>%
   vip()
 ```
 
-We can see that `alcohol` and `density` are the most important variables, and this makes sense since these were the only predictors that showed substantial correlation with `quality` from our correlation plot in the EDA section.
+We can see that `alcohol`, `density`, and their interaction are the most important variables, and this makes sense since these were the predictors that showed the strongest correlation with `quality` from our correlation plot in the EDA section.
 
 Let's see if we can have better performance with different models
 
 ### Regression Model 2 - Random Forest
 
-The next model we consider is a random forest. This is an ensemble tree model, so we construct many trees, controlled by the `trees` parameter. Then the results of these trees are averaged to give us our final model. The parameter `mtry` is the number of predictors that are randomly selected at each split of the tree, and since there are 12 possible predictors, we will try `mtry` = 1, 2, 3, ..., 12. The last parameter we will tune is `min_n`, which is the minimum number of data points that need to flow down to a particular node for the node to be able to split further.
+The next model we consider is a random forest. This is an ensemble tree model, so we construct many trees, controlled by the `trees` parameter. Then the results of these trees are averaged to give us our final model. The parameter `mtry` is the number of predictors that are randomly selected at each split of the tree. The last parameter we will tune is `min_n`, which is the minimum number of data points that need to flow down to a particular node for the node to be able to split further.
+
+Here we set up the model and workflow:
 
 ```{r}
+# set up random forest model
 reg_rf_spec <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) %>%
   set_engine("ranger", importance = "impurity") %>%
   set_mode("regression")
 
+# establish workflow
 reg_rf_wf <- workflow() %>%
   add_model(reg_rf_spec)%>%
   add_recipe(wine_recipe)
 
+# create 3D matrix of parameter values to try and fit models with
 param_grid <- grid_regular(mtry(range = c(1,12)),
                            trees(range = c(2,500)),
                            min_n(range = c(2,40)),
-                           levels = 12)
+                           levels = 8)
 ```
+
+Now for each parameter set in our grid, we fit the model using cross validation, and we record the RMSE.
 
 ```{r, eval=FALSE}
 reg_rf_tune_res <- tune_grid(
@@ -309,14 +340,14 @@ reg_rf_tune_res <- tune_grid(
 ```
 
 ```{r,eval=FALSE,include=FALSE}
-save(reg_rf_tune_res, file = "reg_rf_tune_res_12_level.rds")
+save(reg_rf_tune_res, file = "reg_rf_tune_res_w_interact.rds")
 ```
 
 ```{r,include=FALSE}
-load("reg_rf_tune_res.rds")
+load("rds_files/reg_rf_tune_res_w_interact.rds")
 ```
 
-We use the `autoplot` tune visualize the results of `tune_grid`
+We use the `autoplot()` function to visualize the results of `tune_grid()`
 
 ```{r}
 autoplot(reg_rf_tune_res)
@@ -363,7 +394,7 @@ augment(reg_rf_final_fit, new_data = wine_test) %>%
   theme(plot.title = element_text(hjust = 0.5))
 ```
 
-These visualization show that the random forest model has overall gave more accurate predictions that the decision tree model, but there is still overall a lot of variation in our predictions for a given quality rating.
+These visualizations show that the random forest model has overall gave more accurate predictions that the decision tree model, but there is still overall a lot of variation in our predictions for a given quality rating.
 
 Again, we can visualize the variable importance plot for this model.
 
@@ -373,7 +404,7 @@ reg_rf_final_fit%>%
   vip()
 ```
 
-Just as before, we see that `alcohol` and `density` are the most important predictors.
+As expected, we see that `density:alcohol` and `alcohol` are important predictors. However, we see that `density` is ranked #6 which is quite surprising. `density` is ranked below `free_sulfur_dioxide` which had almost no correlation with `quality`. 
 
 ### Regression Model 3 - Boosted Tree
 
@@ -396,7 +427,7 @@ param_grid <- grid_regular(trees(range = c(2,1000)),
                            levels = 10)
 ```
 
-Now we train our model with cross validation for every set of hyperparameters from our grid, and we record the RMSE for each one.
+Now we train our model with cross validation for every set of parameters from our grid, and we record the RMSE for each one.
 
 ```{r, eval=FALSE}
 reg_boost_tune_res <- tune_grid(
@@ -408,20 +439,20 @@ reg_boost_tune_res <- tune_grid(
 ```
 
 ```{r,eval=FALSE,include=FALSE}
-save(reg_boost_tune_res, file = "reg_boost_tune_res.rds")
+save(reg_boost_tune_res, file = "reg_boost_tune_res_w_interact.rds")
 ```
 
 ```{r,include=FALSE}
-load("reg_boost_tune_res.rds")
+load("rds_files/reg_boost_tune_res_w_interact.rds")
 ```
 
-We visualize the results with the `autoplot` function
+We visualize the results with the `autoplot()` function
 
 ```{r}
 autoplot(reg_boost_tune_res)
 ```
 
-Now we select the best set of parameters and fit the model to our training data
+Now we select the best set of parameters and fit the model to our entire training data
 
 ```{r}
 best_complexity <- select_best(reg_boost_tune_res, metric = "rmse")
@@ -434,6 +465,7 @@ reg_boost_final_fit <- fit(reg_boost_final, data = wine_train)
 Now we assess the performance of our model on the testing data
 
 ```{r}
+# print the result of our test rmse
 augment(reg_boost_final_fit, new_data = wine_test) %>%
   rmse(truth = quality, estimate = .pred)
 ```
@@ -445,10 +477,12 @@ augment(reg_boost_final_fit, new_data = wine_test) %>%
   geom_point(alpha = 0.5)
 ```
 
+The training RMSE was slightly higher for boosted tree as opposed to random forest, but this plot looks boosted tree is overall a better model. The slope of the mean predictions seems to be even steeper than that of the random forest. We can still look at the distribution of the predictions for each quality rating
+
 ```{r,echo=FALSE}
 augment(reg_boost_final_fit, new_data = wine_test) %>%
   ggplot(aes(x = .pred, fill=quality)) +
-  geom_histogram(aes(y = stat(density)),binwidth = 1, )+
+  geom_histogram(aes(y = stat(density)),binwidth = 1 )+
   facet_wrap(~quality, nrow = 3, scales = "free_y")+
   ggtitle("Distribution of Predicted Values by True Quality") +
   labs(x="Predicted Quality", y=" Relative Frequency") +
@@ -457,6 +491,7 @@ augment(reg_boost_final_fit, new_data = wine_test) %>%
   theme(plot.title = element_text(hjust = 0.5))
 ```
 
+This plot makes the performance between boosted tree and random forest look very comparable. It looks like boosted tree is noticably better at predicting 8's, but it is slightly worse at predicting 6's. We will assess which model is actually better in the Conclusion.
 
 Finally, we visualize the variable importance with the `vip()` function.
 
@@ -466,23 +501,31 @@ reg_boost_final_fit%>%
   vip()
 ```
 
+This is quite interesting; `alcohol` was near the top important variable in the previous models, but it doesn't even show up on this plot. Though we still have that `density:alcohol` is by far the most important variable.
 
 ### Regression Model 4 - KNN
 
-The final model we will be fitting is K-Nearest Neighbors (KNN).
+The final model we will be fitting is K-Nearest Neighbors (KNN). This algorithm is different than the 3 previous models since it is not a tree-based model. Instead, KNN is more akin to a clustering method. If we think of our observation being plotted in some high dimensional space, then the prediction of a particular observation is based on its $k$ "closest" neighbors in this space. There are different possible metrics to define the "distance" between points. The parameter $k$ is called `neighbors` in implementation.
+
+We set up the model and workflow:
 
 ```{r}
+# set up the model
 reg_knn_spec <- nearest_neighbor(neighbors = tune()) %>%
   set_engine("kknn") %>%
   set_mode("regression")
 
+# establish workflow
 reg_knn_wf <- workflow() %>%
   add_model(reg_knn_spec)%>%
   add_recipe(wine_recipe)
 
-param_grid <- grid_regular(neighbors(range = c(1,20)),
+# grid of parameter values
+param_grid <- grid_regular(neighbors(range = c(1,40)),
                            levels = 20)
 ```
+
+We evaluate the models with cross validation for each of the parameter values in our grid.
 
 ```{r, eval=FALSE}
 reg_knn_tune_res <- tune_grid(
@@ -493,16 +536,20 @@ reg_knn_tune_res <- tune_grid(
 ```
 
 ```{r,eval=FALSE,include=FALSE}
-save(reg_knn_tune_res, file = "reg_knn_tune_res.rds")
+save(reg_knn_tune_res, file = "reg_knn_tune_res_w_interact.rds")
 ```
 
 ```{r,include=FALSE}
-load("reg_knn_tune_res.rds")
+load("rds_files/reg_knn_tune_res_w_interact.rds")
 ```
+
+We can visualize the results using the `autoplot()` function.
 
 ```{r}
 autoplot(reg_knn_tune_res)
 ```
+
+Now we select our best set of paramters to use for the model that we train.
 
 ```{r}
 best_complexity <- select_best(reg_knn_tune_res, metric = "rmse")
@@ -512,19 +559,21 @@ reg_knn_final <- finalize_workflow(reg_knn_wf, best_complexity)
 reg_knn_final_fit <- fit(reg_knn_final, data = wine_train)
 ```
 
+We now assess the performance of our on our testing data.
+
 ```{r}
 augment(reg_knn_final_fit, new_data = wine_test) %>%
   rmse(truth = quality, estimate = .pred)
 ```
 
-```{r}
+```{r,echo=FALSE}
 augment(reg_knn_final_fit, new_data = wine_test) %>%
   ggplot(aes(quality, .pred)) +
   geom_abline() +
   geom_point(alpha = 0.5)
 ```
 
-```{r}
+```{r,echo=FALSE}
 augment(reg_knn_final_fit, new_data = wine_test) %>%
   ggplot(aes(x = .pred, fill=quality)) +
   geom_histogram(aes(y = stat(density)),binwidth = 1, )+
@@ -535,6 +584,8 @@ augment(reg_knn_final_fit, new_data = wine_test) %>%
   theme_bw()+
   theme(plot.title = element_text(hjust = 0.5))
 ```
+
+The performance of the KNN model does not seem to be great. It looks close to the performance of the decision tree model.
 
 ## Classification Models
 
@@ -552,6 +603,7 @@ all_wine_class <- all_wine %>%
 all_wine_class$quality <- as.factor(all_wine_class$quality)
 all_wine_class %>% head()
 ```
+
 Now we need to just repeat the same setup with this updated dataset. We start by getting the data split.
 
 ```{r}
@@ -570,44 +622,58 @@ wine_fold_class <- vfold_cv(wine_train_class, v=5, strata=quality)
 # use same recipe with appropriate data
 wine_recipe_class <- recipe(quality ~ ., data = wine_train_class)%>%
   step_dummy("color")%>%
+  step_interact(terms = ~density:alcohol + density:chlorides + volatile_acidity:chlorides)%>%
   step_normalize(all_predictors())
 ```
 
 ### Classification Model 1 - Decision Tree
 
+From here on our the code used is almost entirely identical to the Regression Models section. The only thing that is different from the previous section is that we will use ROC AUC as opposed to RMSE to quantify the performance of our models. Furthermore, this means the visualizations used to assess the performance will be different. However, we will use the same visualizations for all classification models just as we used the same visualizations for each regression model.
+
+Here we set up the model and workflow:
+
 ```{r}
+# set up model
 class_tree_spec <- tree_spec %>%
   set_mode("classification")
 
+# establish workflow
 class_tree_wf <- workflow() %>%
   add_model(class_tree_spec %>% set_args(cost_complexity = tune()))%>%
   add_recipe(wine_recipe_class)
 ```
 
-```{r,eval=FALSE}
-set.seed(42069)
+We construct our parameter grid and use `tune_grid()` to determine the best parameter value(s) to use.
 
+```{r,eval=FALSE}
+set.seed(42069)# for reproducibility
+
+# grid of parameter values
 param_grid <- grid_regular(cost_complexity(range = c(-3, -1)), levels = 10)
 
+# fit the models for each paramter value
 class_tree_tune_res <- tune_grid(
   class_tree_wf, 
   resamples = wine_fold_class, 
-  grid = param_grid, 
-  #metrics = metric_set(rmse)
+  grid = param_grid
 )
 ```
 
 ```{r,eval=FALSE,include=FALSE}
-save(class_tree_tune_res, file = "class_tree_tune_res.rds")
+save(class_tree_tune_res, file = "class_tree_tune_res_w_interact.rds")
 ```
 
 ```{r,include=FALSE}
-load("class_tree_tune_res.rds")
+load("rds_files/class_tree_tune_res_w_interact.rds")
 ```
+
+We visualize the results with `autoplot()`
 
 ```{r}
 autoplot(class_tree_tune_res)
 ```
+
+We choose the parameter value that gives the best ROC AUC and fit our model to the training data.
 
 ```{r}
 best_complexity <- select_best(class_tree_tune_res, metric = "roc_auc")
@@ -617,52 +683,71 @@ class_tree_final <- finalize_workflow(class_tree_wf, best_complexity)
 class_tree_final_fit <- fit(class_tree_final, data = wine_train_class)
 ```
 
-```{r}
+Here we visualize our decision tree for this classification problem
+
+```{r,echo=FALSE}
 class_tree_final_fit %>%
   extract_fit_engine() %>%
   rpart.plot()
 ```
 
+Now we assess the performance of our model on our testing data
+
 ```{r}
+# print the value of the roc auc 
 augment(class_tree_final_fit, new_data = wine_test_class) %>% 
   roc_auc(truth = quality, estimate = .pred_Fair:.pred_Poor)
 ```
 
 ```{r}
+# print the value of the accuracy of our model
+augment(class_tree_final_fit, new_data = wine_test_class) %>%
+  accuracy(truth = quality, estimate = .pred_class) 
+```
+
+We can visualize the ROC curves for each of our possible prediction outcomes.
+
+```{r,echo=FALSE}
 # roc curves for the different factor levels
 augment(class_tree_final_fit, new_data = wine_test_class) %>%
   roc_curve(truth = quality, estimate = .pred_Fair:.pred_Poor) %>%
   autoplot()
 ```
 
-```{r}
+The roc curves give us a vague idea for how our model performed, but in reality it's much easier to tell by visualizing the accuracy. A good visualization of accuracy is a confusion matrix.
+
+```{r, echo=FALSE}
 # visualization of the accuracy
 augment(class_tree_final_fit, new_data = wine_test_class) %>%
   conf_mat(truth = quality, estimate = .pred_class) %>%
   autoplot(type="heatmap")
 ```
 
-```{r}
-augment(class_tree_final_fit, new_data = wine_test_class) %>%
-  accuracy(truth = quality, estimate = .pred_class) 
-```
+Overall, the predictive power of our model is not too good. It guesses Fair correctly most of the time, but this is also the most abundant type of observation. It guesses Good correctly about half of the time. It almost never guesses a wine is Poor, and when it does, it is not typically correct.
 
-### Regression Model 2 - Random Forest
+### Classification Model 2 - Random Forest
+
+Now we have the same set up for a random forest model, but we set the mode to classification
 
 ```{r}
+# set up model
 class_rf_spec <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) %>%
   set_engine("ranger", importance = "impurity") %>%
   set_mode("classification")
 
+# establish workflow
 class_rf_wf <- workflow() %>%
   add_model(class_rf_spec)%>%
   add_recipe(wine_recipe_class)
 
-param_grid <- grid_regular(mtry(range = c(1,8)),
+# define 3D space of parameter values
+param_grid <- grid_regular(mtry(range = c(1,12)),
                            trees(range = c(2,500)),
                            min_n(range = c(2,40)),
                            levels = 8)
 ```
+
+Use our parameter grid to fit our models with cross validation and record the ROC AUC. 
 
 ```{r, eval=FALSE}
 class_rf_tune_res <- tune_grid(
@@ -674,16 +759,20 @@ class_rf_tune_res <- tune_grid(
 ```
 
 ```{r,eval=FALSE,include=FALSE}
-save(class_rf_tune_res, file = "class_rf_tune_res.rds")
+save(class_rf_tune_res, file = "class_rf_tune_res_w_interact.rds")
 ```
 
 ```{r,include=FALSE}
-load("class_rf_tune_res.rds")
+load("rds_files/class_rf_tune_res_w_interact.rds")
 ```
+
+Visualize the results with `autoplot()`
 
 ```{r}
 autoplot(class_rf_tune_res)
 ```
+
+Now we select the paramater values that yield the lowest ROC AUC and use these to fit our final model to the training data.
 
 ```{r}
 best_complexity <- select_best(class_rf_tune_res, metric = "roc_auc")
@@ -693,10 +782,21 @@ class_rf_final <- finalize_workflow(class_rf_wf, best_complexity)
 class_rf_final_fit <- fit(class_rf_final, data = wine_train_class)
 ```
 
+Now we assess the models performance on the testing data as before
+
 ```{r}
+# print the value of the roc auc
 augment(class_rf_final_fit, new_data = wine_test_class) %>% 
   roc_auc(truth = quality, estimate = .pred_Fair:.pred_Poor)
 ```
+
+```{r}
+# print the value of the accuracy
+augment(class_rf_final_fit, new_data = wine_test_class) %>%
+  accuracy(truth = quality, estimate = .pred_class) 
+```
+
+Now we visualize these performance metrics
 
 ```{r}
 # roc curves for the different factor levels
@@ -712,26 +812,30 @@ augment(class_rf_final_fit, new_data = wine_test_class) %>%
   autoplot(type="heatmap")
 ```
 
-```{r}
-augment(class_rf_final_fit, new_data = wine_test_class) %>%
-  accuracy(truth = quality, estimate = .pred_class) 
-```
+The performance here is much better. The model still rarely chooses to predict Poor, but when it does, it is correct 6/7 = 85% of the time which is a huge improvement to the last model.
 
 ### Classification Model 3 - Boosted Tree
 
+As before we fit the boosted tree model but with the goal of classification.
+
 ```{r}
+# set up model
 class_boost_spec <- boost_tree(trees = tune(), tree_depth = tune()) %>%
   set_engine("xgboost") %>%
   set_mode("classification")
 
+# establish workflow
 class_boost_wf <- workflow() %>%
   add_model(class_boost_spec)%>%
   add_recipe(wine_recipe_class)
 
+# define parameter grid
 param_grid <- grid_regular(trees(range = c(2,1000)), 
                            tree_depth(range = c(2,40)),
                            levels = 10)
 ```
+
+Fit a model with each combination of paramters and asses permormance on testing data with cross validation.
 
 ```{r, eval=FALSE}
 class_boost_tune_res <- tune_grid(
@@ -743,16 +847,20 @@ class_boost_tune_res <- tune_grid(
 ```
 
 ```{r,eval=FALSE,include=FALSE}
-save(class_boost_tune_res, file = "class_boost_tune_res.rds")
+save(class_boost_tune_res, file = "class_boost_tune_res_w_interact.rds")
 ```
 
 ```{r,include=FALSE}
-load("class_boost_tune_res.rds")
+load("rds_files/class_boost_tune_res_w_interact.rds")
 ```
+
+Visualize the results with `autoplot()`
 
 ```{r}
 autoplot(class_boost_tune_res)
 ```
+
+Select the best parameter set and use it to fit our model with the training data
 
 ```{r}
 best_complexity <- select_best(class_boost_tune_res, metric = "roc_auc")
@@ -761,6 +869,8 @@ class_boost_final <- finalize_workflow(class_boost_wf, best_complexity)
 
 class_boost_final_fit <- fit(class_boost_final, data = wine_train_class)
 ```
+
+Assess the performance of our model on the testing data
 
 ```{r}
 augment(class_boost_final_fit, new_data = wine_test_class) %>% 
@@ -786,20 +896,30 @@ augment(class_boost_final_fit, new_data = wine_test_class) %>%
   autoplot(type="heatmap")
 ```
 
+Compared to random forest, it looks like this model sacrifices some accuracy in predicting Fair wines to be better at predicting both Good and Poor wines.
+
+
 ### Classification Model 4 - KNN
 
+This is our final model of the report. We will re-run the KNN model with the mode set to classification.
+
 ```{r}
+# set up model
 class_knn_spec <- nearest_neighbor(neighbors = tune()) %>%
   set_engine("kknn") %>%
   set_mode("classification")
 
+# establish model
 class_knn_wf <- workflow() %>%
   add_model(class_knn_spec)%>%
   add_recipe(wine_recipe_class)
 
+# define parameter grid
 param_grid <- grid_regular(neighbors(range = c(1,20)),
                            levels = 20)
 ```
+
+Use `tune_grid()` to determine best value of `neighbors`.
 
 ```{r, eval=FALSE}
 class_knn_tune_res <- tune_grid(
@@ -810,16 +930,20 @@ class_knn_tune_res <- tune_grid(
 ```
 
 ```{r,eval=FALSE,include=FALSE}
-save(class_knn_tune_res, file = "class_knn_tune_res.rds")
+save(class_knn_tune_res, file = "class_knn_tune_res_w_interact.rds")
 ```
 
 ```{r,include=FALSE}
-load("class_knn_tune_res.rds")
+load("rds_files/class_knn_tune_res_w_interact.rds")
 ```
+
+Visualize results with `autoplot()`
 
 ```{r}
 autoplot(class_knn_tune_res)
 ```
+
+Select our best value of `neighbors` and train a model with our training data
 
 ```{r}
 best_complexity <- select_best(class_knn_tune_res, metric = "roc_auc")
@@ -829,9 +953,16 @@ class_knn_final <- finalize_workflow(class_knn_wf, best_complexity)
 class_knn_final_fit <- fit(class_knn_final, data = wine_train_class)
 ```
 
+Assess the model's performance on the testing data
+
 ```{r}
 augment(class_knn_final_fit, new_data = wine_test_class) %>% 
   roc_auc(truth = quality, estimate = .pred_Fair:.pred_Poor)
+```
+
+```{r}
+augment(class_knn_final_fit, new_data = wine_test_class) %>%
+  accuracy(truth = quality, estimate = .pred_class) 
 ```
 
 ```{r}
@@ -842,13 +973,76 @@ augment(class_knn_final_fit, new_data = wine_test_class) %>%
 ```
 
 ```{r}
-augment(class_knn_final_fit, new_data = wine_test_class) %>%
-  accuracy(truth = quality, estimate = .pred_class) 
-```
-
-```{r}
 # visualization of the accuracy
 augment(class_knn_final_fit, new_data = wine_test_class) %>%
   conf_mat(truth = quality, estimate = .pred_class) %>%
   autoplot(type="heatmap")
 ```
+
+This is probably our worst model so far, its prediction power is really not good
+
+# Conclusion
+
+## The Best Model
+
+First, we will assess which models had the best overall performance. We will have to do this separately for our regression and classification models, and then we can speculate which method is better for the task.
+
+We used RMSE to select of models, and in some sense RMSE is a measure of how accurate our regression model is. The lower the RMSE, the closer our model is to being perfect.
+
+A big issue we noticed with the regression models is how much varaition there was in the predicitons for any given true quality. We have that the $R^2$ metric is a proportion of how much variability is explained by our model. Therefore, the regression model with the highest $R^2$ value explains the most variability, and thus, we will use this to compare the models against each other.
+
+```{r}
+reg_tree_rsq <- augment(reg_tree_final_fit, new_data = wine_test) %>%
+  rsq(truth = quality, estimate = .pred)
+
+reg_rf_rsq <- augment(reg_rf_final_fit, new_data = wine_test) %>%
+  rsq(truth = quality, estimate = .pred)
+
+reg_boost_rsq <- augment(reg_boost_final_fit, new_data = wine_test) %>%
+  rsq(truth = quality, estimate = .pred)
+
+reg_knn_rsq <- augment(reg_knn_final_fit, new_data = wine_test) %>%
+  rsq(truth = quality, estimate = .pred)
+
+rsqs <- c(reg_tree_rsq$.estimate, reg_rf_rsq$.estimate, 
+                reg_boost_rsq$.estimate, reg_knn_rsq$.estimate)
+models <- c("Decision Tree", "Random Forest", "Boosted Tree", "KNN")
+results <- tibble(rsq = rsqs, models = models)
+results %>% 
+  arrange(-rsqs)
+```
+
+We see that the Random Forest model significantly captures the most variation. This is kind of surprising to me since the visualizations made Boosted Tree look like the best model.
+
+Similarly, we used ROC AUC to select our classification models, but ultimately we care about how accurate of classification model is, so we will use the accuracy metric to compare the classification models against each other.
+
+```{r}
+class_tree_acc <- augment(class_tree_final_fit, new_data = wine_test_class) %>%
+  accuracy(truth = quality, estimate = .pred_class)
+
+class_rf_acc <- augment(class_rf_final_fit, new_data = wine_test_class) %>%
+  accuracy(truth = quality, estimate = .pred_class)
+
+class_boost_acc <- augment(class_boost_final_fit, new_data = wine_test_class) %>%
+  accuracy(truth = quality, estimate = .pred_class)
+
+class_knn_acc <- augment(class_knn_final_fit, new_data = wine_test_class) %>%
+  accuracy(truth = quality, estimate = .pred_class)
+
+accuracies <- c(class_tree_acc$.estimate, class_rf_acc$.estimate, 
+                class_boost_acc$.estimate, class_knn_acc$.estimate)
+models <- c("Decision Tree", "Random Forest", "Boosted Tree", "KNN")
+results <- tibble(accuracies = accuracies, models = models)
+results %>% 
+  arrange(-accuracies)
+```
+
+We see that the overall accuracy of The Random Forest model is just slightly higher than that of the Boosted Tree. However, this difference between first and second place is marginal, and since Boosted Tree was better at assigning Poor and Good classifications to Poor and Good wines, I want to go ahead and say that Boosted Tree is the best classification model.
+
+## Thoughts and Future Ideas
+
+If I were to have to choose between classification and regression, I would say that classification is probably a more appropriate given the discrete nature of the outcome variable. It seems a little unsurprising that the a classification model would perform better overall. Having only 3 outcomes to choose from in the classification models as opposed to the infinite possibilities of the regression models just makes it seem like it would be easier for a classification model to do well.
+
+Also, in a sense, a regression model essentially has the same goal as a classification model. For instance, if a wine is predicted to have a quality between 5.5 and 6.5, we can really consider this wine to be "classified" as a 6. This leads to a future idea: running a classification model with all with all 7 possible outcomes. This would be a lot easier to then directly compare the performance of classificatio versus regression.
+
+Something I found interesting is how every model classified 9 wines as a 7. Maybe this indicates that the quality of the 9-rated wines is more "objectively" close to a 7. These wines were rated by humans after all, and humans can have different feelings amongst each other, and different feelings from day to day that could result in the labeling wines differently depending on the day they tasted it. Since there were so few wines that were rated a 9 to begin with, maybe their quality wasn't that high to begin with; maybe the taster just really liked that wine on that day.

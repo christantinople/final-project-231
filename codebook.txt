@@ -1,0 +1,27 @@
+
+   For more information, read 
+
+   P. Cortez, A. Cerdeira, F. Almeida, T. Matos and J. Reis. 
+   Modeling wine preferences by data mining from physicochemical properties.
+   In Decision Support Systems, Elsevier, 47(4):547-553. ISSN: 0167-9236.
+
+   which references [Cortez et al., 2009] (original source).
+
+   Attribute information:
+
+   Input variables (based on physicochemical tests):
+   1 - fixed_acidity - grams of tartaric acid per cubic decimeter
+   2 - volatile_acidity - grams of acetic acid per cubic decimeter
+   3 - citric_acid - grams of citric acid per cubic decimeter
+   4 - residual_sugar - grams of sugar per cubic decimeter
+   5 - chlorides - grams of sodium chloride per cubic decimeter
+   6 - free_sulfur_dioxide - grams of free sulfur dioxide per cubic decimeter
+   7 - total_sulfur_dioxide - grams of total sulfur dioxide per cubic decimeter
+   8 - density - density of the wine itself (grams per cubic decimeter)
+   9 - ph - the pH of the wine
+   10 - sulphates - grams of potassium sulfate per cubic decimeter
+   11 - alcohol - percentage alcohol by volume
+   Output variable (based on sensory data from humans): 
+   12 - quality (score between 0 and 10)
+
+   Missing Attribute Values: None
